@@ -123,6 +123,3 @@ dist/
 # OS Files
 .DS_Store
 Thumbs.db
-
-# Scratch files
-scratch_*.js
