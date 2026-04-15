@@ -27,6 +27,7 @@ COPY controllers/ ./controllers/
 COPY middleware/ ./middleware/
 COPY models/ ./models/
 COPY routes/ ./routes/
+COPY utils/ ./utils/
 
 # Set ownership
 RUN chown -R appuser:appgroup /app
