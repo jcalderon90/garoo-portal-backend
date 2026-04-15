@@ -4,17 +4,17 @@ import { auth } from '../middleware/auth.js';
 
 const router = express.Router();
 
-// 1. RUTA ESPECÍFICA (MÁXIMA PRIORIDAD)
-// Usamos un prefijo totalmente distinto para evitar cualquier colisión
-router.get('/integrated/facturas-sat', auth, serviceController.getFacturasSat);
-
 // 2. Logging para depuración
 router.use('/execute/:serviceId', (req, res, next) => {
     console.log(`[DEBUG] Request captured for: ${req.params.serviceId}`);
     next();
 });
 
-// 3. RUTAS GENÉRICAS
+// 3. RUTAS ESPECÍFICAS (Capturadas antes que las genéricas)
+router.get('/execute/facturas-sat', auth, serviceController.getFacturasSat);
+router.get('/integrated/facturas-sat', auth, serviceController.getFacturasSat);
+
+// 4. RUTAS GENÉRICAS
 router.post('/execute/:serviceId', auth, serviceController.proxyService);
 router.get('/execute/:serviceId', auth, serviceController.proxyService);
 
