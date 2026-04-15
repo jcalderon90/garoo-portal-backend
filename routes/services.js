@@ -5,8 +5,8 @@ import { auth } from '../middleware/auth.js';
 const router = express.Router();
 
 // 1. RUTA ESPECÍFICA (MÁXIMA PRIORIDAD)
-// Esta ruta sustituye a n8n y debe ir ANTES que cualquier ruta con ':serviceId'
-router.get('/execute/facturas-sat', auth, serviceController.getFacturasSat);
+// Usamos un prefijo totalmente distinto para evitar cualquier colisión
+router.get('/integrated/facturas-sat', auth, serviceController.getFacturasSat);
 
 // 2. Logging para depuración
 router.use('/execute/:serviceId', (req, res, next) => {
