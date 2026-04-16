@@ -12,7 +12,7 @@ const FacturaSchema = new mongoose.Schema({
         pdfLink: String,
         xmlLink: String
     },
-    portal_user: String // Nombre del usuario que envió la factura
+    portal_user: mongoose.Schema.Types.Mixed // Puede ser un String (nombre) o un Object {nombre, correo, _id}
 }, { collection: 'factura', timestamps: true });
 
 export default FacturaSchema;
