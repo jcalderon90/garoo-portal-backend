@@ -221,6 +221,9 @@ export const getFacturasSat = async (req, res) => {
 
                 // Cruzar datos: Emparejar por NIT y Serie (que vienen en inputData del form)
                 facturas = facturasRaw.map(inv => {
+                    // Si ya tiene portal_user (por script o n8n), lo usamos directamente
+                    if (inv.portal_user) return inv;
+
                     const submission = recentHistory.find(h => {
                         const input = h.inputData || {};
                         // Normalizamos para comparar

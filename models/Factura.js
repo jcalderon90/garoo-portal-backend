@@ -11,7 +11,8 @@ const FacturaSchema = new mongoose.Schema({
     files_url: {
         pdfLink: String,
         xmlLink: String
-    }
+    },
+    portal_user: String // Nombre del usuario que envió la factura
 }, { collection: 'factura', timestamps: true });
 
 export default FacturaSchema;
