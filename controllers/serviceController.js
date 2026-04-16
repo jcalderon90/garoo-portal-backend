@@ -175,7 +175,7 @@ export const getFacturasSat = async (req, res) => {
         if (query.dte) filter.numero_dte = { "$regex": query.dte, "$options": "i" };
         if (query.monto) filter.monto_total = parseFloat(query.monto);
 
-        // Obtener el modelo dinámico vinculado a la conexión de la empresa
+        // 1. Obtener el modelo dinámico vinculado a la conexión de la empresa
         let Factura;
         try {
             Factura = await getDynamicModel(targetMongoUri, 'Factura', FacturaSchema);
@@ -193,11 +193,54 @@ export const getFacturasSat = async (req, res) => {
             });
         }
 
-        // Ejecución de consultas
-        const [facturas, total] = await Promise.all([
-            Factura.find(filter).sort({ fecha_emision: -1 }).skip(skip).limit(limit),
+        // 2. Ejecución de consultas de facturas
+        const [facturasRaw, total] = await Promise.all([
+            Factura.find(filter).sort({ fecha_emision: -1 }).skip(skip).limit(limit).lean(),
             Factura.countDocuments(filter)
         ]);
+
+        // 3. Opcional - Cruce con el Historial del Portal para saber quién envió qué
+        // Buscamos los registros en History (Cluster Principal) para esta organización
+        // Nota: Solo buscamos los últimos logs para optimizar
+        let facturas = facturasRaw;
+        try {
+            const orgId = isAdmin && req.query.orgSlug ? 
+                (await mongoose.model('Organization').findOne({ slug: req.query.orgSlug }))?._id : 
+                organization?._id;
+
+            if (orgId) {
+                const recentHistory = await History.find({
+                    organization: orgId,
+                    serviceId: 'facturas', // El ID del formulario de envío
+                    status: 'success'
+                })
+                .populate('user', 'firstName lastName')
+                .sort({ createdAt: -1 })
+                .limit(200) // Suficiente para cubrir la página actual y más
+                .lean();
+
+                // Cruzar datos: Emparejar por NIT y Serie (que vienen en inputData del form)
+                facturas = facturasRaw.map(inv => {
+                    const submission = recentHistory.find(h => {
+                        const input = h.inputData || {};
+                        // Normalizamos para comparar
+                        const histNit = String(input.nit || '').trim();
+                        const histSerie = String(input.serie || '').trim();
+                        return histNit === inv.emisor_nit && histSerie === inv.serie;
+                    });
+
+                    return {
+                        ...inv,
+                        portal_user: submission?.user ? 
+                            `${submission.user.firstName || ''} ${submission.user.lastName || ''}`.trim() : 
+                            null
+                    };
+                });
+            }
+        } catch (histError) {
+            console.warn('[facturas-sat] Error al cruzar con historial:', histError.message);
+            // No bloqueamos la respuesta, enviamos facturas sin info de usuario
+        }
 
         console.log(`[facturas-sat] ✅ ${facturas.length} facturas devueltas (total: ${total})`);
 
