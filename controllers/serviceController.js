@@ -243,10 +243,31 @@ export const getFacturasSat = async (req, res) => {
             Factura.countDocuments(filter)
         ]);
 
+        let facturas = facturasRaw;
+        try {
+            // Hotfix: El flujo de N8N está actualizando 'confirmed' en 'formulario' en lugar de 'factura'
+            const dbConnection = Factura.db;
+            if (dbConnection) {
+                const formCollection = dbConnection.collection('formulario');
+                for (let f of facturas) {
+                    const formDoc = await formCollection.findOne({ 
+                        NIT: String(f.emisor_nit), 
+                        SERIE: String(f.serie), 
+                        NRO_FACTURA: String(f.numero_dte) 
+                    });
+                    if (formDoc) {
+                        f.matched = formDoc.matched || f.matched;
+                        f.confirmed = formDoc.confirmed || f.confirmed;
+                    }
+                }
+            }
+        } catch (dbErr) {
+            console.error("[facturas-sat] Error syncing match from formulario:", dbErr.message);
+        }
+
         // 3. Opcional - Cruce con el Historial del Portal para saber quién envió qué
         // Buscamos los registros en History (Cluster Principal) para esta organización
         // Nota: Solo buscamos los últimos logs para optimizar
-        let facturas = facturasRaw;
         try {
             const orgId = isAdmin && req.query.orgSlug ? 
                 (await mongoose.model('Organization').findOne({ slug: req.query.orgSlug }))?._id : 
