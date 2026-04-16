@@ -10,7 +10,9 @@ export const proxyService = async (req, res) => {
     const user = req.user || null;
     const organization = user?.organization || null;
 
-    if (user && organization && !organization.activeServices.includes(serviceId)) {
+    const isAdmin = (user?.role || '').toLowerCase() === 'admin';
+
+    if (!isAdmin && user && organization && !organization.activeServices.includes(serviceId)) {
         console.log(`[DEBUG] 403 REJECTED: Service ${serviceId} not in [${organization.activeServices}]`);
         return res.status(403).json({ error: `Service '${serviceId}' not active for your organization.` });
     }
