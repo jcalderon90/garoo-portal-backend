@@ -14,10 +14,9 @@ export const getConnection = async (mongoUri) => {
     }
 
     try {
-        const conn = await mongoose.createConnection(mongoUri, {
-            useNewUrlParser: true,
-            useUnifiedTopology: true,
-        }).asPromise();
+        // MongoDB Driver v4+ ya no acepta useNewUrlParser ni useUnifiedTopology
+        // (son el comportamiento por defecto y pasar las opciones lanza MongoParseError)
+        const conn = await mongoose.createConnection(mongoUri).asPromise();
 
         connections[mongoUri] = conn;
         

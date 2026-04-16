@@ -117,18 +117,19 @@ export const getHistory = async (req, res) => {
 
 export const getFacturasSat = async (req, res) => {
     try {
-        console.log('[DEBUG] Inside getFacturasSat controller');
-        // Temporalmente permitimos todo para ver si es un problema de permisos en DB
         const { organization } = req.user;
         
-        // Log para ver qué llega en el usuario
-        console.log('[DEBUG] User Org:', organization?.name, '| ID:', organization?._id);
-        
-        const mongoUri = organization?.databaseConfig?.mongoUri || "mongodb+srv://jorgecalderon:oFeBnppKqA3HfNED@cluster0.vtkafrd.mongodb.net/Garoo";
+        console.log('[facturas-sat] Org:', organization?.name, '| ID:', organization?._id);
+
+        // ── Verificar que la organización tiene DB propia configurada ──
+        const mongoUri = organization?.databaseConfig?.mongoUri;
 
         if (!mongoUri) {
-            console.log('[DEBUG] 400 ERROR: No mongoUri found');
-            return res.status(400).json({ error: 'Organización no tiene base de datos configurada.' });
+            console.warn(`[facturas-sat] ⚠️  Org "${organization?.name}" no tiene databaseConfig.mongoUri configurado.`);
+            return res.status(400).json({
+                error: 'db_not_configured',
+                message: `La organización "${organization?.name || 'desconocida'}" no tiene una base de datos configurada. Contacta al administrador.`
+            });
         }
 
         const query = req.query;
@@ -158,13 +159,31 @@ export const getFacturasSat = async (req, res) => {
         if (query.monto) filter.monto_total = parseFloat(query.monto);
 
         // Obtener el modelo dinámico vinculado a la conexión de la empresa
-        const Factura = await getDynamicModel(mongoUri, 'Factura', FacturaSchema);
+        let Factura;
+        try {
+            Factura = await getDynamicModel(mongoUri, 'Factura', FacturaSchema);
+        } catch (connErr) {
+            // Separar error de conexión del resto
+            const isNetworkError = connErr.message?.includes('ENOTFOUND') ||
+                                   connErr.message?.includes('ETIMEDOUT') ||
+                                   connErr.message?.includes('connect ECONNREFUSED');
+
+            console.error(`[facturas-sat] ❌ Error de conexión a DB de la org:`, connErr.message);
+            return res.status(503).json({
+                error: 'db_connection_failed',
+                message: isNetworkError
+                    ? 'No se pudo conectar a la base de datos de la organización. Verifica la cadena de conexión en la configuración.'
+                    : `Error de base de datos: ${connErr.message}`,
+            });
+        }
 
         // Ejecución de consultas
         const [facturas, total] = await Promise.all([
             Factura.find(filter).sort({ fecha_emision: -1 }).skip(skip).limit(limit),
             Factura.countDocuments(filter)
         ]);
+
+        console.log(`[facturas-sat] ✅ ${facturas.length} facturas devueltas (total: ${total})`);
 
         res.json({
             data: facturas,
@@ -175,7 +194,10 @@ export const getFacturasSat = async (req, res) => {
             }
         });
     } catch (error) {
-        console.error('Error in getFacturasSat:', error);
-        res.status(500).json({ error: error.message });
+        console.error('[facturas-sat] ❌ Error inesperado:', error.message);
+        res.status(500).json({
+            error: 'unexpected_error',
+            message: error.message
+        });
     }
 };
