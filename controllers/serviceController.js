@@ -21,14 +21,23 @@ export const proxyService = async (req, res) => {
 
         console.log(`🚀 Proxying ${req.method} for ${serviceId} (Public: ${!user})`);
 
+        const headers = { 
+            'Content-Type': req.headers['content-type'] || 'application/json',
+        };
+
+        // Inyectar datos del usuario para que n8n los conozca
+        if (user) {
+            headers['x-portal-user-id'] = user._id.toString();
+            headers['x-portal-user-name'] = `${user.firstName || ''} ${user.lastName || ''}`.trim();
+            headers['x-portal-user-email'] = user.email;
+        }
+
         const response = await axios({
             method: req.method,
             url: targetUrl,
             data: req.body,
             params: req.query,
-            headers: { 
-                'Content-Type': req.headers['content-type'] || 'application/json',
-            }
+            headers
         });
 
         History.create({
