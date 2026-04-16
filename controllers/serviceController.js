@@ -169,12 +169,17 @@ export const getFacturasSat = async (req, res) => {
 
         const filter = {};
 
+        // Función para escapar caracteres especiales de Regex
+        const escapeRegExp = (string) => {
+            return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        };
+
         // Réplica exacta de la lógica de n8n "FILTERS"
         if (query.emisor) {
-            filter.emisor_nombre = { "$regex": query.emisor, "$options": "i" };
+            filter.emisor_nombre = { "$regex": escapeRegExp(query.emisor), "$options": "i" };
         }
         if (query.nit) {
-            filter.emisor_nit = { "$regex": query.nit, "$options": "i" };
+            filter.emisor_nit = { "$regex": escapeRegExp(query.nit), "$options": "i" };
         }
         
         // Filtro de Fechas (Formato ISO String manual como en n8n)
@@ -184,13 +189,13 @@ export const getFacturasSat = async (req, res) => {
             if (query.to) filter.fecha_emision.$lte = query.to + "T23:59:59.999";
         }
 
-        if (query.serie) filter.serie = { "$regex": query.serie, "$options": "i" };
-        if (query.dte) filter.numero_dte = { "$regex": query.dte, "$options": "i" };
+        if (query.serie) filter.serie = { "$regex": escapeRegExp(query.serie), "$options": "i" };
+        if (query.dte) filter.numero_dte = { "$regex": escapeRegExp(query.dte), "$options": "i" };
         if (query.monto) filter.monto_total = parseFloat(query.monto);
 
         // Nuevo Filtro: Usuario que envió (portal_user)
         if (query.user) {
-            const userRegex = { "$regex": query.user, "$options": "i" };
+            const userRegex = { "$regex": escapeRegExp(query.user), "$options": "i" };
             filter.$or = [
                 { portal_user: userRegex },
                 { "portal_user.nombre": userRegex }
