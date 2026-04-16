@@ -111,12 +111,19 @@ export const getUserServices = async (req, res) => {
 export const getHistory = async (req, res) => {
     try {
         const { serviceId } = req.params;
-        const { organization } = req.user;
+        const { organization, role, _id } = req.user;
 
-        const history = await History.find({ 
+        const query = { 
             serviceId, 
             organization: organization._id 
-        })
+        };
+
+        // Si no es admin, solo ver sus propias ejecuciones
+        if (role?.toLowerCase() !== 'admin') {
+            query.user = _id;
+        }
+
+        const history = await History.find(query)
         .populate('user', 'firstName lastName email')
         .sort({ createdAt: -1 })
         .limit(50);
