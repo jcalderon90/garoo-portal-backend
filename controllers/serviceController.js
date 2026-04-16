@@ -238,6 +238,17 @@ export const getFacturasSat = async (req, res) => {
         }
 
         // 2. Construcción de Pipeline de Agregación para Cruce y Filtros
+        const isTrue = (val) => {
+            const v = Array.isArray(val) ? val[0] : val;
+            return v === "true" || v === true || v === "1";
+        };
+        const isFalse = (val) => {
+            const v = Array.isArray(val) ? val[0] : val;
+            return v === "false" || v === false || v === "0";
+        };
+
+        console.log(`[facturas-sat] Filtrando - Matched: ${query.matched} | Odoo: ${query.confirmed}`);
+
         const pipeline = [
             { $match: filter },
             {
@@ -274,10 +285,6 @@ export const getFacturasSat = async (req, res) => {
         ];
 
         // Filtros post-cruce (Matched / Confirmed)
-        // Manejamos strings, booleans y posibles variaciones de entrada
-        const isTrue = (val) => val === "true" || val === true || val === "1";
-        const isFalse = (val) => val === "false" || val === false || val === "0";
-
         if (query.matched !== undefined && query.matched !== "") {
             if (isTrue(query.matched)) {
                 pipeline.push({ $match: { calculatedMatched: true } });
@@ -305,6 +312,9 @@ export const getFacturasSat = async (req, res) => {
                 ]
             }
         });
+
+        // Debug: Log del pipeline final
+        // console.log("[facturas-sat] Pipeline:", JSON.stringify(pipeline, null, 2));
 
         const results = await Factura.aggregate(pipeline);
         let facturas = results[0]?.data || [];
