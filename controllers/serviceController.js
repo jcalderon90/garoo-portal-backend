@@ -37,9 +37,11 @@ export const proxyService = async (req, res) => {
         const response = await axios({
             method: req.method,
             url: targetUrl,
-            data: req.body,
+            data: req, // Enviamos el stream original (incluye archivos)
             params: req.query,
-            headers
+            headers,
+            maxContentLength: Infinity,
+            maxBodyLength: Infinity
         });
 
         History.create({
