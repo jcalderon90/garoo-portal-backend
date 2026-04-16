@@ -188,6 +188,15 @@ export const getFacturasSat = async (req, res) => {
         if (query.dte) filter.numero_dte = { "$regex": query.dte, "$options": "i" };
         if (query.monto) filter.monto_total = parseFloat(query.monto);
 
+        // Nuevo Filtro: Usuario que envió (portal_user)
+        if (query.user) {
+            const userRegex = { "$regex": query.user, "$options": "i" };
+            filter.$or = [
+                { portal_user: userRegex },
+                { "portal_user.nombre": userRegex }
+            ];
+        }
+
         // 1. Obtener el modelo dinámico vinculado a la conexión de la empresa
         let Factura;
         try {
