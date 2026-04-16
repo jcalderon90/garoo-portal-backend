@@ -44,11 +44,16 @@ export const proxyService = async (req, res) => {
             maxBodyLength: Infinity
         });
 
+        const mergedInputData = { 
+            ...req.query, 
+            ...(typeof req.body === 'object' ? req.body : {}) 
+        };
+
         History.create({
             serviceId,
             organization: organization?._id || null,
             user: user?._id || null,
-            inputData: req.body,
+            inputData: mergedInputData,
             outputData: response.data,
             status: 'success'
         }).catch(() => {});
@@ -57,11 +62,16 @@ export const proxyService = async (req, res) => {
     } catch (error) {
         console.error(`❌ Proxy error for ${serviceId}:`, error.message);
         
+        const mergedInputData = { 
+            ...req.query, 
+            ...(typeof req.body === 'object' ? req.body : {}) 
+        };
+
         History.create({
             serviceId,
             organization: organization?._id || null,
             user: user?._id || null,
-            inputData: req.body,
+            inputData: mergedInputData,
             outputData: { error: error.message },
             status: 'error'
         }).catch(() => {});
