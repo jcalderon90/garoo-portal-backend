@@ -237,33 +237,78 @@ export const getFacturasSat = async (req, res) => {
             });
         }
 
-        // 2. Ejecución de consultas de facturas
-        const [facturasRaw, total] = await Promise.all([
-            Factura.find(filter).sort({ fecha_emision: -1 }).skip(skip).limit(limit).lean(),
-            Factura.countDocuments(filter)
-        ]);
-
-        let facturas = facturasRaw;
-        try {
-            // Hotfix: El flujo de N8N está actualizando 'confirmed' en 'formulario' en lugar de 'factura'
-            const dbConnection = Factura.db;
-            if (dbConnection) {
-                const formCollection = dbConnection.collection('formulario');
-                for (let f of facturas) {
-                    const formDoc = await formCollection.findOne({ 
-                        NIT: String(f.emisor_nit), 
-                        SERIE: String(f.serie), 
-                        NRO_FACTURA: String(f.numero_dte) 
-                    });
-                    if (formDoc) {
-                        f.matched = formDoc.matched || f.matched;
-                        f.confirmed = formDoc.confirmed || f.confirmed;
-                    }
+        // 2. Construcción de Pipeline de Agregación para Cruce y Filtros
+        const pipeline = [
+            { $match: filter },
+            {
+                $lookup: {
+                    from: "formulario",
+                    let: { nit: "$emisor_nit", serie: "$serie", nro: "$numero_dte" },
+                    pipeline: [
+                        {
+                            $match: {
+                                $expr: {
+                                    $and: [
+                                        { $eq: ["$NIT", "$$nit"] },
+                                        { $eq: ["$SERIE", "$$serie"] },
+                                        { $eq: ["$NRO_FACTURA", "$$nro"] }
+                                    ]
+                                }
+                            }
+                        }
+                    ],
+                    as: "form_info"
+                }
+            },
+            {
+                $addFields: {
+                    formDoc: { $arrayElemAt: ["$form_info", 0] }
+                }
+            },
+            {
+                $addFields: {
+                    matched: { $cond: { if: { $gt: [{ $size: "$form_info" }, 0] }, then: { $ifNull: ["$formDoc.matched", false] }, else: { $ifNull: ["$matched", false] } } },
+                    confirmed: { $cond: { if: { $gt: [{ $size: "$form_info" }, 0] }, then: { $ifNull: ["$formDoc.confirmed", false] }, else: { $ifNull: ["$confirmed", false] } } }
                 }
             }
-        } catch (dbErr) {
-            console.error("[facturas-sat] Error syncing match from formulario:", dbErr.message);
+        ];
+
+        // Filtros post-cruce (Matched / Confirmed)
+        // Manejamos strings, booleans y posibles variaciones de entrada
+        const isTrue = (val) => val === "true" || val === true || val === "1";
+        const isFalse = (val) => val === "false" || val === false || val === "0";
+
+        if (query.matched !== undefined && query.matched !== "") {
+            if (isTrue(query.matched)) {
+                pipeline.push({ $match: { matched: true } });
+            } else if (isFalse(query.matched)) {
+                pipeline.push({ $match: { matched: false } });
+            }
         }
+
+        if (query.confirmed !== undefined && query.confirmed !== "") {
+            if (isTrue(query.confirmed)) {
+                pipeline.push({ $match: { confirmed: true } });
+            } else if (isFalse(query.confirmed)) {
+                pipeline.push({ $match: { confirmed: false } });
+            }
+        }
+
+        // Facet para obtener total y datos paginados
+        pipeline.push({
+            $facet: {
+                metadata: [{ $count: "total" }],
+                data: [
+                    { $sort: { fecha_emision: -1 } },
+                    { $skip: skip },
+                    { $limit: limit }
+                ]
+            }
+        });
+
+        const results = await Factura.aggregate(pipeline);
+        let facturas = results[0]?.data || [];
+        const total = results[0]?.metadata[0]?.total || 0;
 
         // 3. Opcional - Cruce con el Historial del Portal para saber quién envió qué
         // Buscamos los registros en History (Cluster Principal) para esta organización
@@ -285,7 +330,7 @@ export const getFacturasSat = async (req, res) => {
                 .lean();
 
                 // Cruzar datos: Emparejar por NIT y Serie (que vienen en inputData del form)
-                facturas = facturasRaw.map(inv => {
+                facturas = facturas.map(inv => {
                     // Si ya tiene portal_user (por script o n8n)
                     let userName = null;
                     if (inv.portal_user) {
