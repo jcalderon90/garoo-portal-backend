@@ -339,37 +339,39 @@ export const getFacturasSat = async (req, res) => {
                 .limit(200) // Suficiente para cubrir la página actual y más
                 .lean();
 
-        // Cruzar datos: Emparejar por NIT y Serie (que vienen en inputData del form)
-        facturas = facturas.map(inv => {
-            let userName = null;
-            if (inv.portal_user) {
-                userName = typeof inv.portal_user === 'object' ? inv.portal_user.nombre : inv.portal_user;
             }
 
-            // No retornar aquí, seguir para buscar en historial si userName es null
-            let finalUser = userName;
-            if (!finalUser && typeof recentHistory !== 'undefined') {
-                const submission = recentHistory.find(h => {
-                    const input = h.inputData || {};
-                    const histNit = String(input.nit || '').trim();
-                    const histSerie = String(input.serie || '').trim();
-                    return histNit === inv.emisor_nit && histSerie === inv.serie;
-                });
-                
-                if (submission?.user) {
-                    finalUser = `${submission.user.firstName || ''} ${submission.user.lastName || ''}`.trim();
+            // Cruzar datos: Emparejar por NIT y Serie (que vienen en inputData del form)
+            facturas = facturas.map(inv => {
+                let userName = null;
+                if (inv.portal_user) {
+                    userName = typeof inv.portal_user === 'object' ? inv.portal_user.nombre : inv.portal_user;
                 }
-            }
 
-            // Retornar siempre con los campos calculados sobrescritos para el frontend
-            return {
-                ...inv,
-                matched: inv.calculatedMatched,
-                confirmed: inv.calculatedConfirmed,
-                portal_user: finalUser || null
-            };
-        });
-            }
+                // No retornar aquí, seguir para buscar en historial si userName es null
+                let finalUser = userName;
+                const historyScope = typeof recentHistory !== 'undefined' ? recentHistory : [];
+                if (!finalUser) {
+                    const submission = historyScope.find(h => {
+                        const input = h.inputData || {};
+                        const histNit = String(input.nit || '').trim();
+                        const histSerie = String(input.serie || '').trim();
+                        return histNit === inv.emisor_nit && histSerie === inv.serie;
+                    });
+                    
+                    if (submission?.user) {
+                        finalUser = `${submission.user.firstName || ''} ${submission.user.lastName || ''}`.trim();
+                    }
+                }
+
+                // Retornar siempre con los campos calculados sobrescritos para el frontend
+                return {
+                    ...inv,
+                    matched: inv.calculatedMatched,
+                    confirmed: inv.calculatedConfirmed,
+                    portal_user: finalUser || null
+                };
+            });
         } catch (histError) {
             console.warn('[facturas-sat] Error al cruzar con historial:', histError.message);
             // No bloqueamos la respuesta, enviamos facturas sin info de usuario
