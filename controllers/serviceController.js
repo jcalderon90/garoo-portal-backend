@@ -341,30 +341,32 @@ export const getFacturasSat = async (req, res) => {
 
                 // Cruzar datos: Emparejar por NIT y Serie (que vienen en inputData del form)
                 facturas = facturas.map(inv => {
-                    // Si ya tiene portal_user (por script o n8n)
                     let userName = null;
                     if (inv.portal_user) {
                         userName = typeof inv.portal_user === 'object' ? inv.portal_user.nombre : inv.portal_user;
                     }
 
-                    if (userName) return { ...inv, portal_user: userName };
+                    // No retornar aquí, seguir para buscar en historial si userName es null
+                    let finalUser = userName;
+                    if (!finalUser) {
+                        const submission = recentHistory.find(h => {
+                            const input = h.inputData || {};
+                            const histNit = String(input.nit || '').trim();
+                            const histSerie = String(input.serie || '').trim();
+                            return histNit === inv.emisor_nit && histSerie === inv.serie;
+                        });
+                        
+                        if (submission?.user) {
+                            finalUser = `${submission.user.firstName || ''} ${submission.user.lastName || ''}`.trim();
+                        }
+                    }
 
-                    // Si no tiene, buscamos en el historial del portal
-                    const submission = recentHistory.find(h => {
-                        const input = h.inputData || {};
-                        const histNit = String(input.nit || '').trim();
-                        const histSerie = String(input.serie || '').trim();
-                        return histNit === inv.emisor_nit && histSerie === inv.serie;
-                    });
-
-                    // Sobrescribir matched/confirmed con los calculados para no cambiar el frontend
+                    // Retornar siempre con los campos calculados sobrescritos para el frontend
                     return {
                         ...inv,
                         matched: inv.calculatedMatched,
                         confirmed: inv.calculatedConfirmed,
-                        portal_user: userName || (submission?.user ? 
-                            `${submission.user.firstName || ''} ${submission.user.lastName || ''}`.trim() : 
-                            null)
+                        portal_user: finalUser || null
                     };
                 });
             }
