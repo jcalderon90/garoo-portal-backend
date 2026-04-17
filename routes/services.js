@@ -2,7 +2,7 @@ import express from 'express';
 import * as serviceController from '../controllers/serviceController.js';
 import { auth } from '../middleware/auth.js';
 import { validate } from '../middleware/validator.js';
-import * as serviceSchemas from '../schemas/service.schema.js';
+import * as serviceSchemas from './schemas/service.schema.js';
 
 const router = express.Router();
 
