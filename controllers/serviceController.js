@@ -278,8 +278,8 @@ export const getFacturasSat = async (req, res) => {
             },
             {
                 $addFields: {
-                    calculatedMatched: { $cond: { if: { $gt: [{ $size: "$form_info" }, 0] }, then: { $ifNull: ["$formDoc.matched", false] }, else: { $ifNull: ["$matched", false] } } },
-                    calculatedConfirmed: { $cond: { if: { $gt: [{ $size: "$form_info" }, 0] }, then: { $ifNull: ["$formDoc.confirmed", false] }, else: { $ifNull: ["$confirmed", false] } } }
+                    calculatedMatched: { $cond: { if: { $gt: [{ $size: "$form_info" }, 0] }, then: true, else: { $ifNull: ["$matched", false] } } },
+                    calculatedConfirmed: { $cond: { if: { $gt: [{ $size: "$form_info" }, 0] }, then: true, else: { $ifNull: ["$confirmed", false] } } }
                 }
             }
         ];
@@ -339,36 +339,36 @@ export const getFacturasSat = async (req, res) => {
                 .limit(200) // Suficiente para cubrir la página actual y más
                 .lean();
 
-                // Cruzar datos: Emparejar por NIT y Serie (que vienen en inputData del form)
-                facturas = facturas.map(inv => {
-                    let userName = null;
-                    if (inv.portal_user) {
-                        userName = typeof inv.portal_user === 'object' ? inv.portal_user.nombre : inv.portal_user;
-                    }
+        // Cruzar datos: Emparejar por NIT y Serie (que vienen en inputData del form)
+        facturas = facturas.map(inv => {
+            let userName = null;
+            if (inv.portal_user) {
+                userName = typeof inv.portal_user === 'object' ? inv.portal_user.nombre : inv.portal_user;
+            }
 
-                    // No retornar aquí, seguir para buscar en historial si userName es null
-                    let finalUser = userName;
-                    if (!finalUser) {
-                        const submission = recentHistory.find(h => {
-                            const input = h.inputData || {};
-                            const histNit = String(input.nit || '').trim();
-                            const histSerie = String(input.serie || '').trim();
-                            return histNit === inv.emisor_nit && histSerie === inv.serie;
-                        });
-                        
-                        if (submission?.user) {
-                            finalUser = `${submission.user.firstName || ''} ${submission.user.lastName || ''}`.trim();
-                        }
-                    }
-
-                    // Retornar siempre con los campos calculados sobrescritos para el frontend
-                    return {
-                        ...inv,
-                        matched: inv.calculatedMatched,
-                        confirmed: inv.calculatedConfirmed,
-                        portal_user: finalUser || null
-                    };
+            // No retornar aquí, seguir para buscar en historial si userName es null
+            let finalUser = userName;
+            if (!finalUser && typeof recentHistory !== 'undefined') {
+                const submission = recentHistory.find(h => {
+                    const input = h.inputData || {};
+                    const histNit = String(input.nit || '').trim();
+                    const histSerie = String(input.serie || '').trim();
+                    return histNit === inv.emisor_nit && histSerie === inv.serie;
                 });
+                
+                if (submission?.user) {
+                    finalUser = `${submission.user.firstName || ''} ${submission.user.lastName || ''}`.trim();
+                }
+            }
+
+            // Retornar siempre con los campos calculados sobrescritos para el frontend
+            return {
+                ...inv,
+                matched: inv.calculatedMatched,
+                confirmed: inv.calculatedConfirmed,
+                portal_user: finalUser || null
+            };
+        });
             }
         } catch (histError) {
             console.warn('[facturas-sat] Error al cruzar con historial:', histError.message);
