@@ -88,3 +88,34 @@ El backend cuenta con scripts ejecutables en node bajo `/scripts/`:
 *   Migración de data y facturas asociadas a sus autores de Garoo Portal: `migrate-invoices-user.js`
 
 Estos scripts son vitales al momento del "onboarding" de un nuevo cliente SaaS/Enterprise dentro del Garoo Portal, para certificar que el puente proxy <> DB remota se establezca sin errores de timeout.
+
+---
+
+## 7. Estado Actual v3.5 (Abril 2026): Optimización Historial SAT
+
+Se ha implementado una actualización crítica en el módulo de **MundoVerde > Historial SAT** para resolver inconsistencias entre la data cruda del SAT e historial.
+
+### A. Cruce de Datos en Tiempo Real (Cross-Cluster Aggregation)
+El controlador `getFacturasSat` ahora realiza una agregación dinámica que:
+1.  Busca la factura en el clúster remoto del cliente.
+2.  Realiza un `$lookup` contra la colección `formulario` (Historial SAT) para identificar si la factura ya fue enviada o "matcheada".
+3.  **Lógica de Unificación:** Se ha forzado que si una factura existe en el historial del portal, tanto la columna **Matched** como la columna **Odoo** (Confirmed) se marquen visualmente como **SI**, asegurando una experiencia coherente.
+
+### B. Mejoras en la Interfaz de Alta Densidad
+*   **Contador Dinámico:** Se añadió un indicador `TOTAL: [N]` en la cabecera, sincronizado con los filtros aplicados.
+*   **Symmetry UI:** Re-diseño de la barra de acciones superior (Filtros + Limpiar + Paginación) con alturas unificadas a 32px para un acabado premium.
+*   **Reseteo Maestro:** Botón "Limpiar" para restablecer todos los filtros y volver al estado inicial del dashboard.
+
+### C. Pendientes Críticos y Automatización (n8n)
+Aunque la UI ya muestra consistencia, la arquitectura requiere una **nueva pieza de automatización en n8n**:
+
+> [!IMPORTANT]
+> **REQUERIMIENTO: Automatización de Conciliación Odoo-Mongo**
+> Es necesario construir un flujo en n8n que:
+> 1.  Consulte periódicamente (Cron) las facturas en el sistema **Odoo**.
+> 2.  Compare los registros contra la base de datos de **MongoDB**.
+> 3.  Actualice el estado `confirmed: true` en Mongo para aquellas facturas que ya se encuentren en Odoo pero que no fueron enviadas a través del portal (entradas por otros canales).
+> 
+> *Sin esta pieza, el dashboard solo puede confirmar las facturas que "pasaron" por el portal, ignorando las procesadas externamente.*
+
+---
