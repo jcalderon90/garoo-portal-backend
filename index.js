@@ -2,6 +2,7 @@ import 'dotenv/config';
 import express from 'express';
 import mongoose from 'mongoose';
 import cors from 'cors';
+import rateLimit from 'express-rate-limit';
 
 import authRoutes from './routes/auth.js';
 import serviceRoutes from './routes/services.js';
@@ -19,6 +20,18 @@ app.use(cors({
     origin: allowedOrigins.includes('*') ? true : allowedOrigins,
     credentials: true,
 }));
+
+// Rate Limiting
+const limiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutos
+    limit: 150, // Limite de 150 peticiones por IP cada 15 min
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    message: { error: 'Demasiadas peticiones desde esta IP. Por favor, inténtalo más tarde.' }
+});
+
+app.use(limiter);
+
 app.use(express.json());
 
 // Database Connection

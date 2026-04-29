@@ -12,9 +12,15 @@ export const proxyService = async (req, res) => {
 
     const isAdmin = (user?.role || '').toLowerCase() === 'admin';
 
-    if (!isAdmin && user && organization && !organization.activeServices.includes(serviceId)) {
-        console.log(`[DEBUG] 403 REJECTED: Service ${serviceId} not in [${organization.activeServices}]`);
-        return res.status(403).json({ error: `Service '${serviceId}' not active for your organization.` });
+    if (!isAdmin && user && organization) {
+        if (!organization.activeServices.includes(serviceId)) {
+            console.log(`[DEBUG] 403 REJECTED: Service ${serviceId} not in [${organization.activeServices}]`);
+            return res.status(403).json({ error: `Service '${serviceId}' not active for your organization.` });
+        }
+        if (!user.allowedServices?.includes(serviceId)) {
+            console.log(`[DEBUG] 403 REJECTED: Service ${serviceId} not in user allowedServices [${user.allowedServices}]`);
+            return res.status(403).json({ error: `Service '${serviceId}' not allowed for your user account.` });
+        }
     }
 
     try {
@@ -123,13 +129,24 @@ export const getHistory = async (req, res) => {
         const { serviceId } = req.params;
         const { organization, role, _id } = req.user;
 
+        const isAdmin = (role || '').toLowerCase() === 'admin';
+
+        if (!isAdmin) {
+            if (!organization?.activeServices?.includes(serviceId)) {
+                return res.status(403).json({ error: `Service '${serviceId}' not active for your organization.` });
+            }
+            if (!req.user.allowedServices?.includes(serviceId)) {
+                return res.status(403).json({ error: `Service '${serviceId}' not allowed for your user account.` });
+            }
+        }
+
         const query = { 
             serviceId, 
             organization: organization._id 
         };
 
         // Si no es admin, solo ver sus propias ejecuciones
-        if (role?.toLowerCase() !== 'admin') {
+        if (!isAdmin) {
             query.user = _id;
         }
 
@@ -147,10 +164,22 @@ export const getHistory = async (req, res) => {
 
 export const getFacturasSat = async (req, res) => {
     try {
-        const { organization, role } = req.user;
+        const { organization, role, allowedServices } = req.user;
         const isAdmin = (role || '').toLowerCase() === 'admin';
         
         console.log(`[facturas-sat] User org: ${organization?.name} | Role: ${role} | Admin: ${isAdmin}`);
+
+        if (!isAdmin) {
+            const hasOrgAccess = organization?.activeServices?.includes('facturas-sat') || organization?.activeServices?.includes('facturacion');
+            const hasUserAccess = allowedServices?.includes('facturas-sat') || allowedServices?.includes('facturacion');
+            
+            if (!hasOrgAccess) {
+                return res.status(403).json({ error: `Service 'facturas-sat' not active for your organization.` });
+            }
+            if (!hasUserAccess) {
+                return res.status(403).json({ error: `Service 'facturas-sat' not allowed for your user account.` });
+            }
+        }
 
         let targetMongoUri = organization?.databaseConfig?.mongoUri;
 
