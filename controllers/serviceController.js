@@ -33,12 +33,20 @@ export const proxyService = async (req, res) => {
             'Content-Type': req.headers['content-type'] || 'application/json',
         };
 
+        // Forward content-length if present (vital for streams)
+        if (req.headers['content-length']) {
+            headers['content-length'] = req.headers['content-length'];
+        }
+
         // Inyectar datos del usuario para que n8n los conozca
         if (user) {
             headers['x-portal-user-id'] = user._id.toString();
             headers['x-portal-user-name'] = `${user.firstName || ''} ${user.lastName || ''}`.trim();
             headers['x-portal-user-email'] = user.email;
         }
+
+        console.log(`[DEBUG] Proxying to: ${targetUrl}`);
+        console.log(`[DEBUG] Headers:`, JSON.stringify(headers));
 
         const response = await axios({
             method: req.method,
@@ -47,7 +55,8 @@ export const proxyService = async (req, res) => {
             params: req.query,
             headers,
             maxContentLength: Infinity,
-            maxBodyLength: Infinity
+            maxBodyLength: Infinity,
+            decompress: false // Avoid automatic decompression if possible
         });
 
         const mergedInputData = { 
