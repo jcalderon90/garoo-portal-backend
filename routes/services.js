@@ -15,6 +15,7 @@ router.use('/execute/:serviceId', (req, res, next) => {
 // 3. RUTAS ESPECÍFICAS (Capturadas antes que las genéricas)
 router.get('/execute/facturas-sat', auth, validate(serviceSchemas.facturasSatQuerySchema), serviceController.getFacturasSat);
 router.get('/integrated/facturas-sat', auth, validate(serviceSchemas.facturasSatQuerySchema), serviceController.getFacturasSat);
+router.get('/execute/spectrum-leads', auth, validate(serviceSchemas.spectrumLeadsQuerySchema), serviceController.getSpectrumLeads);
 
 // 4. RUTAS GENÉRICAS
 router.post('/execute/:serviceId', auth, validate(serviceSchemas.proxyServiceSchema), serviceController.proxyService);

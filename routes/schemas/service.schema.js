@@ -22,6 +22,17 @@ export const getHistorySchema = z.object({
     })
 });
 
+export const spectrumLeadsQuerySchema = z.object({
+    query: z.object({
+        page: z.string().optional(),
+        pageSize: z.string().optional(),
+        search: z.string().optional(),
+        channel: z.string().optional(),
+        emotion: z.string().optional(),
+        reservation: z.string().optional(),
+    }),
+});
+
 // Nota: El proxyService (/:serviceId) pasa toda la carga al webhook de n8n.
 // Se valida levemente el param para evitar exploits como strings vacíos.
 export const proxyServiceSchema = z.object({

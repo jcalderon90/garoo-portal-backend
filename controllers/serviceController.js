@@ -3,6 +3,7 @@ import mongoose from 'mongoose';
 import History from '../models/History.js';
 import Service from '../models/Service.js';
 import FacturaSchema from '../models/Factura.js';
+import LeadSchema from '../models/Lead.js';
 import { getDynamicModel } from '../utils/connectionManager.js';
 
 export const proxyService = async (req, res) => {
@@ -477,4 +478,156 @@ export const getOrgUsers = async (req, res) => {
     }
 };
 
+// Normalize channel string from DB ("whatsapp") to display format ("WhatsApp")
+const normalizeChannel = (raw) => {
+    const c = (raw || '').toLowerCase();
+    if (c.includes('whatsapp') || c === 'wa') return 'WhatsApp';
+    if (c.includes('instagram') || c === 'ig') return 'Instagram';
+    if (c.includes('facebook') || c.includes('fb') || c.includes('mess')) return 'Facebook';
+    if (c.includes('web')) return 'Web';
+    return raw || 'Otro';
+};
 
+// Map DB document (users collection) to the shape the frontend expects
+const mapLeadDoc = (doc) => ({
+    id: doc._id?.toString(),
+    user_id: doc.manychat_id,
+    name: doc.nombre || null,
+    whatsapp_name: doc.nombre || null,
+    phone: doc.telefono || null,
+    email: doc.correo || null,
+    input_channel: normalizeChannel(doc.input_channel),
+    emocion_detectada: doc._emocion || null,
+    has_reservation: doc.has_reservation || false,
+    first_interaction: doc.first_interaction || null,
+    last_interaction: doc.last_interaction || doc.last_update || null,
+    palabra_clave: doc._palabra_clave || null,
+    resumen_breve: doc.conversation_ressume?.Resumen || null,
+    proyecto: doc.proyecto || null,
+    datos_completos: doc.datos_completos || false,
+    tag_medio: doc.tag_medio || null,
+});
+
+export const getSpectrumLeads = async (req, res) => {
+    try {
+        const { organization, role, allowedServices } = req.user;
+        const isAdmin = (role || '').toLowerCase() === 'admin';
+
+        if (!isAdmin) {
+            const hasOrgAccess = organization?.activeServices?.includes('spectrum-leads');
+            const hasUserAccess = allowedServices?.includes('spectrum-leads');
+            if (!hasOrgAccess) {
+                return res.status(403).json({ error: "Service 'spectrum-leads' not active for your organization." });
+            }
+            if (!hasUserAccess) {
+                return res.status(403).json({ error: "Service 'spectrum-leads' not allowed for your user account." });
+            }
+        }
+
+        const targetMongoUri = organization?.databaseConfig?.mongoUri;
+        if (!targetMongoUri) {
+            return res.status(400).json({
+                error: 'db_not_configured',
+                message: `La organización "${organization?.name}" no tiene base de datos configurada.`
+            });
+        }
+
+        let Lead;
+        try {
+            Lead = await getDynamicModel(targetMongoUri, 'Lead', LeadSchema);
+        } catch (connErr) {
+            console.error('[spectrum-leads] ❌ DB connection error:', connErr.message);
+            return res.status(503).json({
+                error: 'db_connection_failed',
+                message: 'No se pudo conectar a la base de datos de Spectrum.'
+            });
+        }
+
+        const query = req.query;
+        const page = parseInt(query.page) || 1;
+        const limit = parseInt(query.pageSize) || 10;
+        const skip = (page - 1) * limit;
+
+        const escapeRegExp = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+        // Build filter
+        const filter = {};
+
+        if (query.search?.trim()) {
+            const re = { $regex: escapeRegExp(query.search.trim()), $options: 'i' };
+            filter.$or = [{ nombre: re }, { manychat_id: re }, { telefono: re }];
+        }
+
+        if (query.channel && query.channel !== '') {
+            // DB stores lowercase, frontend sends title case
+            filter.input_channel = { $regex: escapeRegExp(query.channel), $options: 'i' };
+        }
+
+        if (query.reservation !== undefined && query.reservation !== '') {
+            filter.has_reservation = query.reservation === 'true';
+        }
+
+        // Aggregation: join quality_logs to get emocion/intencion data
+        const pipeline = [
+            { $match: filter },
+            {
+                $lookup: {
+                    from: 'quality_logs',
+                    let: { mid: '$manychat_id' },
+                    pipeline: [
+                        { $match: { $expr: { $eq: ['$manychat_id', '$$mid'] } } },
+                        { $sort: { fecha_analisis: -1 } },
+                        { $limit: 1 }
+                    ],
+                    as: '_quality'
+                }
+            },
+            {
+                $addFields: {
+                    _emocion: { $arrayElemAt: ['$_quality.intencion_detectada', 0] },
+                    _palabra_clave: { $arrayElemAt: ['$_quality.funnel_stage', 0] }
+                }
+            }
+        ];
+
+        // Apply emotion filter post-lookup if requested
+        if (query.emotion && query.emotion !== '') {
+            pipeline.push({
+                $match: {
+                    _emocion: { $regex: escapeRegExp(query.emotion), $options: 'i' }
+                }
+            });
+        }
+
+        // Count + paginate in one facet
+        pipeline.push({
+            $facet: {
+                metadata: [{ $count: 'total' }],
+                data: [
+                    { $sort: { last_interaction: -1, last_update: -1, timestamp: -1 } },
+                    { $skip: skip },
+                    { $limit: limit }
+                ]
+            }
+        });
+
+        const results = await Lead.aggregate(pipeline);
+        const leads = (results[0]?.data || []).map(mapLeadDoc);
+        const total = results[0]?.metadata[0]?.total || 0;
+
+        console.log(`[spectrum-leads] ✅ ${leads.length} leads devueltos (total: ${total})`);
+
+        res.json({
+            leads,
+            total,
+            meta: {
+                page,
+                totalPages: Math.ceil(total / limit) || 1,
+                totalCount: total
+            }
+        });
+    } catch (error) {
+        console.error('[spectrum-leads] ❌ Error inesperado:', error.message);
+        res.status(500).json({ error: 'unexpected_error', message: error.message });
+    }
+};
