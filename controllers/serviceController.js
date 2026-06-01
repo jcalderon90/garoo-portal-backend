@@ -3,8 +3,7 @@ import mongoose from 'mongoose';
 import History from '../models/History.js';
 import Service from '../models/Service.js';
 import FacturaSchema from '../models/Factura.js';
-import LeadSchema from '../models/Lead.js';
-import { getDynamicModel, getConnection } from '../utils/connectionManager.js';
+import { getDynamicModel } from '../utils/connectionManager.js';
 
 export const proxyService = async (req, res) => {
     const { serviceId } = req.params;
@@ -14,18 +13,12 @@ export const proxyService = async (req, res) => {
     const isAdmin = (user?.role || '').toLowerCase() === 'admin';
 
     if (!isAdmin && user && organization) {
-        // Normalización de IDs: n8n usa 'facturas' pero la DB suele tener 'facturacion'
-        const checkId = serviceId === 'facturas' ? 'facturacion' : serviceId;
-        
-        const hasOrgAccess = organization.activeServices.includes(serviceId) || organization.activeServices.includes(checkId);
-        if (!hasOrgAccess) {
-            console.log(`[DEBUG] 403 REJECTED: Service ${serviceId}/${checkId} not in [${organization.activeServices}]`);
+        if (!organization.activeServices.includes(serviceId)) {
+            console.log(`[DEBUG] 403 REJECTED: Service ${serviceId} not in [${organization.activeServices}]`);
             return res.status(403).json({ error: `Service '${serviceId}' not active for your organization.` });
         }
-
-        const hasUserAccess = user.allowedServices?.includes(serviceId) || user.allowedServices?.includes(checkId);
-        if (!hasUserAccess) {
-            console.log(`[DEBUG] 403 REJECTED: Service ${serviceId}/${checkId} not in user allowedServices [${user.allowedServices}]`);
+        if (!user.allowedServices?.includes(serviceId)) {
+            console.log(`[DEBUG] 403 REJECTED: Service ${serviceId} not in user allowedServices [${user.allowedServices}]`);
             return res.status(403).json({ error: `Service '${serviceId}' not allowed for your user account.` });
         }
     }
@@ -40,20 +33,12 @@ export const proxyService = async (req, res) => {
             'Content-Type': req.headers['content-type'] || 'application/json',
         };
 
-        // Forward content-length if present (vital for streams)
-        if (req.headers['content-length']) {
-            headers['content-length'] = req.headers['content-length'];
-        }
-
         // Inyectar datos del usuario para que n8n los conozca
         if (user) {
             headers['x-portal-user-id'] = user._id.toString();
             headers['x-portal-user-name'] = `${user.firstName || ''} ${user.lastName || ''}`.trim();
             headers['x-portal-user-email'] = user.email;
         }
-
-        console.log(`[DEBUG] Proxying to: ${targetUrl}`);
-        console.log(`[DEBUG] Headers:`, JSON.stringify(headers));
 
         const response = await axios({
             method: req.method,
@@ -62,8 +47,7 @@ export const proxyService = async (req, res) => {
             params: req.query,
             headers,
             maxContentLength: Infinity,
-            maxBodyLength: Infinity,
-            decompress: false // Avoid automatic decompression if possible
+            maxBodyLength: Infinity
         });
 
         const mergedInputData = { 
@@ -376,7 +360,7 @@ export const getFacturasSat = async (req, res) => {
             if (orgId) {
                 const recentHistory = await History.find({
                     organization: orgId,
-                    serviceId: 'facturacion', // El ID del formulario de envío
+                    serviceId: 'facturas', // El ID del formulario de envío
                     status: 'success'
                 })
                 .populate('user', 'firstName lastName')
@@ -478,308 +462,4 @@ export const getOrgUsers = async (req, res) => {
     }
 };
 
-// Normalize channel string from DB ("whatsapp") to display format ("WhatsApp")
-const normalizeChannel = (raw) => {
-    const c = (raw || '').toLowerCase();
-    if (c.includes('whatsapp') || c === 'wa') return 'WhatsApp';
-    if (c.includes('instagram') || c === 'ig') return 'Instagram';
-    if (c.includes('facebook') || c.includes('fb') || c.includes('mess')) return 'Facebook';
-    if (c.includes('web')) return 'Web';
-    return raw || 'Otro';
-};
 
-// Map DB document (users collection) to the shape the frontend expects
-const mapLeadDoc = (doc) => ({
-    id: doc._id?.toString(),
-    user_id: doc.manychat_id,
-    name: doc.nombre || null,
-    whatsapp_name: doc.nombre || null,
-    phone: doc.telefono || null,
-    email: doc.correo || null,
-    input_channel: normalizeChannel(doc.input_channel),
-    emocion_detectada: doc._emocion || null,
-    has_reservation: doc.has_reservation || false,
-    first_interaction: doc.first_interaction || null,
-    last_interaction: doc.last_interaction || doc.last_update || null,
-    palabra_clave: doc._palabra_clave || null,
-    resumen_breve: doc.conversation_ressume?.Resumen || null,
-    proyecto: doc.proyecto || null,
-    datos_completos: doc.datos_completos || false,
-    tag_medio: doc.tag_medio || null,
-});
-
-export const getSpectrumLeads = async (req, res) => {
-    try {
-        const { organization, role, allowedServices } = req.user;
-        const isAdmin = (role || '').toLowerCase() === 'admin';
-
-        if (!isAdmin) {
-            const hasOrgAccess = organization?.activeServices?.includes('spectrum-leads');
-            const hasUserAccess = allowedServices?.includes('spectrum-leads');
-            if (!hasOrgAccess) {
-                return res.status(403).json({ error: "Service 'spectrum-leads' not active for your organization." });
-            }
-            if (!hasUserAccess) {
-                return res.status(403).json({ error: "Service 'spectrum-leads' not allowed for your user account." });
-            }
-        }
-
-        let targetMongoUri = organization?.databaseConfig?.mongoUri;
-
-        if (isAdmin && req.query.orgSlug) {
-            const Organization = mongoose.model('Organization');
-            const targetOrg = await Organization.findOne({ slug: req.query.orgSlug }).lean();
-            if (!targetOrg) {
-                return res.status(404).json({
-                    error: 'org_not_found',
-                    message: `No se encontró la organización con slug: "${req.query.orgSlug}"`
-                });
-            }
-            targetMongoUri = targetOrg.databaseConfig?.mongoUri;
-            console.log(`[spectrum-leads] Admin targeting org: ${targetOrg.name} (${req.query.orgSlug})`);
-        }
-
-        console.log(`[spectrum-leads] User org: ${organization?.name} | Role: ${role} | URI configured: ${!!targetMongoUri}`);
-
-        if (!targetMongoUri) {
-            return res.status(400).json({
-                error: 'db_not_configured',
-                message: `La organización "${req.query.orgSlug || organization?.name}" no tiene base de datos configurada.`
-            });
-        }
-
-        let Lead;
-        try {
-            Lead = await getDynamicModel(targetMongoUri, 'Lead', LeadSchema);
-        } catch (connErr) {
-            console.error('[spectrum-leads] ❌ DB connection error:', connErr.message);
-            return res.status(503).json({
-                error: 'db_connection_failed',
-                message: 'No se pudo conectar a la base de datos de Spectrum.'
-            });
-        }
-
-        const query = req.query;
-        const page = parseInt(query.page) || 1;
-        const limit = parseInt(query.pageSize) || 10;
-        const skip = (page - 1) * limit;
-
-        const escapeRegExp = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
-        // Build filter
-        const filter = {};
-
-        if (query.search?.trim()) {
-            const re = { $regex: escapeRegExp(query.search.trim()), $options: 'i' };
-            filter.$or = [{ nombre: re }, { manychat_id: re }, { telefono: re }];
-        }
-
-        if (query.channel && query.channel !== '') {
-            // DB stores lowercase, frontend sends title case
-            filter.input_channel = { $regex: escapeRegExp(query.channel), $options: 'i' };
-        }
-
-        if (query.reservation !== undefined && query.reservation !== '') {
-            filter.has_reservation = query.reservation === 'true';
-        }
-
-        // Aggregation: join quality_logs to get emocion/intencion data
-        const pipeline = [
-            { $match: filter },
-            {
-                $lookup: {
-                    from: 'quality_logs',
-                    let: { mid: '$manychat_id' },
-                    pipeline: [
-                        { $match: { $expr: { $eq: ['$manychat_id', '$$mid'] } } },
-                        { $sort: { fecha_analisis: -1 } },
-                        { $limit: 1 }
-                    ],
-                    as: '_quality'
-                }
-            },
-            {
-                $addFields: {
-                    _emocion: { $arrayElemAt: ['$_quality.intencion_detectada', 0] },
-                    _palabra_clave: { $arrayElemAt: ['$_quality.funnel_stage', 0] }
-                }
-            }
-        ];
-
-        // Apply emotion filter post-lookup if requested
-        if (query.emotion && query.emotion !== '') {
-            pipeline.push({
-                $match: {
-                    _emocion: { $regex: escapeRegExp(query.emotion), $options: 'i' }
-                }
-            });
-        }
-
-        // Count + paginate in one facet
-        pipeline.push({
-            $facet: {
-                metadata: [{ $count: 'total' }],
-                data: [
-                    { $sort: { last_interaction: -1, last_update: -1, timestamp: -1 } },
-                    { $skip: skip },
-                    { $limit: limit }
-                ]
-            }
-        });
-
-        const results = await Lead.aggregate(pipeline);
-        const leads = (results[0]?.data || []).map(mapLeadDoc);
-        const total = results[0]?.metadata[0]?.total || 0;
-
-        console.log(`[spectrum-leads] ✅ ${leads.length} leads devueltos (total: ${total})`);
-
-        res.json({
-            leads,
-            total,
-            meta: {
-                page,
-                totalPages: Math.ceil(total / limit) || 1,
-                totalCount: total
-            }
-        });
-    } catch (error) {
-        console.error('[spectrum-leads] ❌ Error inesperado:', error.message);
-        res.status(500).json({ error: 'unexpected_error', message: error.message });
-    }
-};
-
-const PROJECT_NAMES = {
-    PVV: 'Parque Vista Verde',
-    PMAR: 'Parque Mariscal',
-    PPO: 'Parque Portales',
-    PPOL: 'Polanco Parque Boutique',
-    PSB: 'Parque Sotobosque',
-};
-const KNOWN_PROJECTS = ['PVV', 'PMAR', 'PPO', 'PPOL', 'PSB'];
-
-export const getSpectrumDashboard = async (req, res) => {
-    try {
-        const { organization, role, allowedServices } = req.user;
-        const isAdmin = (role || '').toLowerCase() === 'admin';
-
-        if (!isAdmin) {
-            const hasOrgAccess = organization?.activeServices?.includes('spectrum-leads');
-            const hasUserAccess = allowedServices?.includes('spectrum-leads');
-            if (!hasOrgAccess) return res.status(403).json({ error: "Service not active for your organization." });
-            if (!hasUserAccess) return res.status(403).json({ error: "Service not allowed for your user account." });
-        }
-
-        let targetMongoUri = organization?.databaseConfig?.mongoUri;
-        if (isAdmin && req.query.orgSlug) {
-            const Organization = mongoose.model('Organization');
-            const targetOrg = await Organization.findOne({ slug: req.query.orgSlug }).lean();
-            if (!targetOrg) return res.status(404).json({ error: 'org_not_found', message: `No se encontró la organización: "${req.query.orgSlug}"` });
-            targetMongoUri = targetOrg.databaseConfig?.mongoUri;
-        }
-
-        if (!targetMongoUri) return res.status(400).json({ error: 'db_not_configured', message: 'La organización no tiene base de datos configurada.' });
-
-        const conn = await getConnection(targetMongoUri);
-
-        const { from, to } = req.query;
-        const buildDateFilter = (field) => {
-            if (!from && !to) return {};
-            const cond = {};
-            if (from) cond.$gte = new Date(from);
-            if (to) cond.$lte = new Date(`${to}T23:59:59`);
-            return { [field]: cond };
-        };
-
-        const [
-            fase1ByProject,
-            fase2ByProject,
-            channelDist,
-            appointmentsByProject,
-            totalFase1,
-            totalFase2,
-        ] = await Promise.all([
-            conn.collection('users').aggregate([
-                { $match: buildDateFilter('last_interaction') },
-                { $group: { _id: '$proyecto', count: { $sum: 1 } } },
-            ]).toArray(),
-
-            conn.collection('users_fase_2').aggregate([
-                { $match: buildDateFilter('timestamp') },
-                { $group: { _id: '$proyecto', count: { $sum: 1 } } },
-            ]).toArray(),
-
-            conn.collection('users').aggregate([
-                { $match: buildDateFilter('last_interaction') },
-                { $group: { _id: '$input_channel', count: { $sum: 1 } } },
-            ]).toArray(),
-
-            conn.collection('appointments').aggregate([
-                { $match: buildDateFilter('created_at') },
-                { $group: { _id: { $ifNull: ['$project', '$proyecto'] }, count: { $sum: 1 } } },
-            ]).toArray(),
-
-            conn.collection('users').countDocuments(buildDateFilter('last_interaction')),
-            conn.collection('users_fase_2').countDocuments(buildDateFilter('timestamp')),
-        ]);
-
-        const fase1Map = Object.fromEntries(fase1ByProject.map(r => [r._id, r.count]));
-        const fase2Map = Object.fromEntries(fase2ByProject.map(r => [r._id, r.count]));
-        const citasMap = Object.fromEntries(appointmentsByProject.map(r => [r._id, r.count]));
-        const totalLeads = totalFase1 + totalFase2;
-
-        const allProjectKeys = new Set([
-            ...KNOWN_PROJECTS,
-            ...Object.keys(fase1Map),
-            ...Object.keys(fase2Map),
-        ]);
-
-        const by_project = [...allProjectKeys]
-            .filter(k => k && k !== 'null' && k !== 'undefined')
-            .sort((a, b) => {
-                const ai = KNOWN_PROJECTS.indexOf(a);
-                const bi = KNOWN_PROJECTS.indexOf(b);
-                if (ai === -1 && bi === -1) return a.localeCompare(b);
-                if (ai === -1) return 1;
-                if (bi === -1) return -1;
-                return ai - bi;
-            })
-            .map(key => {
-                const leads = (fase1Map[key] || 0) + (fase2Map[key] || 0);
-                const citas = citasMap[key] || 0;
-                return {
-                    proyecto: key,
-                    nombre: PROJECT_NAMES[key] || key,
-                    fase1: fase1Map[key] || 0,
-                    fase2: fase2Map[key] || 0,
-                    leads,
-                    leads_pct: totalLeads > 0 ? +((leads / totalLeads) * 100).toFixed(1) : 0,
-                    citas,
-                    citas_pct: leads > 0 ? +((citas / leads) * 100).toFixed(1) : 0,
-                };
-            });
-
-        const by_channel = {};
-        channelDist.forEach(r => {
-            const ch = normalizeChannel(r._id);
-            by_channel[ch] = (by_channel[ch] || 0) + r.count;
-        });
-
-        const totalCitas = appointmentsByProject.reduce((s, r) => s + r.count, 0);
-
-        console.log(`[spectrum-dashboard] ✅ ${totalLeads} leads, ${totalCitas} citas`);
-        res.json({
-            summary: {
-                total_leads: totalLeads,
-                total_fase1: totalFase1,
-                total_fase2: totalFase2,
-                total_citas: totalCitas,
-                conversion_rate: totalLeads > 0 ? +((totalCitas / totalLeads) * 100).toFixed(1) : 0,
-            },
-            by_project,
-            by_channel,
-        });
-    } catch (error) {
-        console.error('[spectrum-dashboard] ❌ Error:', error.message);
-        res.status(500).json({ error: 'unexpected_error', message: error.message });
-    }
-};

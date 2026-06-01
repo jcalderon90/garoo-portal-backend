@@ -1,5 +1,6 @@
 import express from 'express';
 import * as serviceController from '../controllers/serviceController.js';
+import * as spectrumController from '../controllers/spectrumController.js';
 import { auth } from '../middleware/auth.js';
 import { validate } from '../middleware/validator.js';
 import * as serviceSchemas from './schemas/service.schema.js';
@@ -15,8 +16,11 @@ router.use('/execute/:serviceId', (req, res, next) => {
 // 3. RUTAS ESPECÍFICAS (Capturadas antes que las genéricas)
 router.get('/execute/facturas-sat', auth, validate(serviceSchemas.facturasSatQuerySchema), serviceController.getFacturasSat);
 router.get('/integrated/facturas-sat', auth, validate(serviceSchemas.facturasSatQuerySchema), serviceController.getFacturasSat);
-router.get('/execute/spectrum-leads', auth, validate(serviceSchemas.spectrumLeadsQuerySchema), serviceController.getSpectrumLeads);
-router.get('/execute/spectrum-dashboard', auth, validate(serviceSchemas.spectrumDashboardQuerySchema), serviceController.getSpectrumDashboard);
+
+// Spectrum — directo a MongoDB (sin pasar por n8n)
+router.get('/execute/spectrum-dashboard', auth, spectrumController.getDashboard);
+router.get('/execute/spectrum-leads',     auth, spectrumController.getLeads);
+router.post('/execute/lead-chat',         auth, spectrumController.getLeadChat);
 
 // 4. RUTAS GENÉRICAS
 router.post('/execute/:serviceId', auth, validate(serviceSchemas.proxyServiceSchema), serviceController.proxyService);
