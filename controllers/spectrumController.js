@@ -181,22 +181,34 @@ export const getDashboard = async (req, res) => {
                     citas:     p.f1_citas,
                     conv:      pct(p.f1_citas, p.f1_leads),
                     leads_pct: pct(p.f1_leads, pt.f1_leads),
-                    citas_pct: pct(p.f1_citas, pt.f1_citas),
+                    citas_pct: pct(p.f1_citas, pt.f1_leads),
                 },
                 fase2_detail: {
                     leads:     p.f2_leads,
                     citas:     p.f2_citas,
                     conv:      pct(p.f2_citas, p.f2_leads),
                     leads_pct: pct(p.f2_leads, pt.f2_leads),
-                    citas_pct: pct(p.f2_citas, pt.f2_citas),
+                    citas_pct: pct(p.f2_citas, pt.f2_leads),
                 },
             };
         });
 
         // Fila Total de la tabla por fase
         const phase_totals = {
-            fase1: { leads: pt.f1_leads, citas: pt.f1_citas, conv: pct(pt.f1_citas, pt.f1_leads) },
-            fase2: { leads: pt.f2_leads, citas: pt.f2_citas, conv: pct(pt.f2_citas, pt.f2_leads) },
+            fase1: {
+                leads:     pt.f1_leads,
+                citas:     pt.f1_citas,
+                conv:      pct(pt.f1_citas, pt.f1_leads),
+                leads_pct: 100,
+                citas_pct: pct(pt.f1_citas, pt.f1_leads),
+            },
+            fase2: {
+                leads:     pt.f2_leads,
+                citas:     pt.f2_citas,
+                conv:      pct(pt.f2_citas, pt.f2_leads),
+                leads_pct: 100,
+                citas_pct: pct(pt.f2_citas, pt.f2_leads),
+            },
         };
 
         const by_channel = Object.fromEntries(
