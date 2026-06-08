@@ -30,6 +30,50 @@ const chatSchema = (collection) =>
 const getChatModel = (collectionName) =>
     getDynamicModel(SPECTRUM_URI(), `SpectrumChat_${collectionName}`, chatSchema(collectionName));
 
+// Catálogo de proyectos: mapea el código (PMAR, PVV...) a su nombre legible
+const projectSchema = new mongoose.Schema(
+    { code: String, name: String, crm_code: String, mongodb_db: String },
+    { strict: false, collection: 'projects' }
+);
+const getProjectsModel = () => getDynamicModel(SPECTRUM_URI(), 'SpectrumProject', projectSchema);
+
+// Construye un mapa { CODIGO_MAYUS: 'Nombre legible' } a partir de la colección projects.
+// users.proyecto viene en mayúsculas (PMAR), mientras projects.code está en minúsculas;
+// indexamos por crm_code, mongodb_db y code (todos normalizados a mayúsculas) para cubrir variantes.
+const buildProjectNameMap = async () => {
+    const docs = await getProjectsModel().then(M => M.find({}).lean());
+    const map = {};
+    for (const p of docs) {
+        if (!p.name) continue;
+        for (const key of [p.crm_code, p.mongodb_db, p.code]) {
+            if (key) map[String(key).toUpperCase()] = p.name;
+        }
+    }
+    return map;
+};
+
+// Normaliza el campo proyecto: null, "", "null" → null (un único bucket "Sin proyecto")
+const PROYECTO_NORM = {
+    $let: {
+        vars: { p: { $trim: { input: { $ifNull: [{ $toString: '$proyecto' }, ''] } } } },
+        in: { $cond: [{ $in: ['$$p', ['', 'null', 'NULL', 'undefined']] }, null, '$$p'] },
+    },
+};
+
+// Cuenta como "cita" tener ≥1 registro en appointments (fuente de verdad real,
+// en vez del flag has_reservation que está desincronizado). Incluye todos los tipos.
+const APPOINTMENTS_LOOKUP = [
+    {
+        $lookup: {
+            from: 'appointments',
+            localField: 'manychat_id',
+            foreignField: 'manychat_id',
+            as: '_appts',
+        },
+    },
+    { $addFields: { has_appt: { $gt: [{ $size: '$_appts' }, 0] } } },
+];
+
 // Mapea documento (ya enriquecido con quality_info) al contrato del frontend
 const mapLead = (doc) => ({
     user_id:           doc.manychat_id,
@@ -70,25 +114,31 @@ export const getDashboard = async (req, res) => {
         if (to)   dateFilter.$lte = to + 'T99';
         const match = Object.keys(dateFilter).length ? { last_interaction: dateFilter } : {};
 
-        const [summary, byProject, byChannelRaw] = await Promise.all([
+        const [summary, byProject, byChannelRaw, projectNames] = await Promise.all([
             Lead.aggregate([
                 { $match: match },
+                ...APPOINTMENTS_LOOKUP,
                 { $group: {
                     _id:         null,
                     total_leads: { $sum: 1 },
                     total_fase2: { $sum: { $cond: [{ $eq: ['$fase_2', true] }, 1, 0] } },
                     total_fase1: { $sum: { $cond: [{ $ne:  ['$fase_2', true] }, 1, 0] } },
-                    total_citas: { $sum: { $cond: ['$has_reservation', 1, 0] } },
+                    total_citas: { $sum: { $cond: ['$has_appt', 1, 0] } },
                 }},
             ]),
             Lead.aggregate([
                 { $match: match },
+                ...APPOINTMENTS_LOOKUP,
                 { $group: {
-                    _id:   '$proyecto',
-                    leads: { $sum: 1 },
-                    citas: { $sum: { $cond: ['$has_reservation', 1, 0] } },
-                    fase2: { $sum: { $cond: [{ $eq: ['$fase_2', true] }, 1, 0] } },
-                    fase1: { $sum: { $cond: [{ $ne:  ['$fase_2', true] }, 1, 0] } },
+                    _id:   PROYECTO_NORM,
+                    leads:    { $sum: 1 },
+                    citas:    { $sum: { $cond: ['$has_appt', 1, 0] } },
+                    // Leads por fase (fase_2 === true → Fase 2; resto → Fase 1)
+                    f1_leads: { $sum: { $cond: [{ $ne:  ['$fase_2', true] }, 1, 0] } },
+                    f2_leads: { $sum: { $cond: [{ $eq: ['$fase_2', true] }, 1, 0] } },
+                    // Citas por fase (lead con cita Y de esa fase)
+                    f1_citas: { $sum: { $cond: [{ $and: [{ $ne: ['$fase_2', true] }, '$has_appt'] }, 1, 0] } },
+                    f2_citas: { $sum: { $cond: [{ $and: [{ $eq: ['$fase_2', true] }, '$has_appt'] }, 1, 0] } },
                 }},
                 { $sort: { leads: -1 } },
             ]),
@@ -96,6 +146,7 @@ export const getDashboard = async (req, res) => {
                 { $match: match },
                 { $group: { _id: '$input_channel', count: { $sum: 1 } } },
             ]),
+            buildProjectNameMap(),
         ]);
 
         const s = summary[0] || { total_leads: 0, total_fase1: 0, total_fase2: 0, total_citas: 0 };
@@ -103,16 +154,50 @@ export const getDashboard = async (req, res) => {
             ? Math.round((s.total_citas / s.total_leads) * 100)
             : 0;
 
-        const by_project = byProject.map(p => ({
-            proyecto:  p._id || 'Sin proyecto',
-            nombre:    p._id || 'Sin proyecto',
-            leads:     p.leads,
-            leads_pct: s.total_leads > 0 ? Math.round((p.leads  / s.total_leads) * 100) : 0,
-            citas:     p.citas,
-            citas_pct: p.leads  > 0 ? Math.round((p.citas  / p.leads)        * 100) : 0,
-            fase1:     p.fase1,
-            fase2:     p.fase2,
-        }));
+        const pct = (n, d) => (d > 0 ? Math.round((n / d) * 100) : 0);
+
+        // Totales por fase (denominador de los % de cada fase)
+        const pt = byProject.reduce((a, p) => {
+            a.f1_leads += p.f1_leads; a.f2_leads += p.f2_leads;
+            a.f1_citas += p.f1_citas; a.f2_citas += p.f2_citas;
+            return a;
+        }, { f1_leads: 0, f2_leads: 0, f1_citas: 0, f2_citas: 0 });
+
+        const by_project = byProject.map(p => {
+            const code = p._id; // ya normalizado: código real o null
+            return {
+                proyecto:  code || 'S/C',
+                nombre:    code ? (projectNames[code.toUpperCase()] || code) : 'Sin clasificar / abandonados',
+                // Campos planos (vistas Barras y Tarjetas)
+                leads:     p.leads,
+                leads_pct: pct(p.leads, s.total_leads),
+                citas:     p.citas,
+                citas_pct: pct(p.citas, p.leads),
+                fase1:     p.f1_leads,
+                fase2:     p.f2_leads,
+                // Desglose por fase (vista Tabla): Conv. = citas/leads, % respecto al total de la fase
+                fase1_detail: {
+                    leads:     p.f1_leads,
+                    citas:     p.f1_citas,
+                    conv:      pct(p.f1_citas, p.f1_leads),
+                    leads_pct: pct(p.f1_leads, pt.f1_leads),
+                    citas_pct: pct(p.f1_citas, pt.f1_citas),
+                },
+                fase2_detail: {
+                    leads:     p.f2_leads,
+                    citas:     p.f2_citas,
+                    conv:      pct(p.f2_citas, p.f2_leads),
+                    leads_pct: pct(p.f2_leads, pt.f2_leads),
+                    citas_pct: pct(p.f2_citas, pt.f2_citas),
+                },
+            };
+        });
+
+        // Fila Total de la tabla por fase
+        const phase_totals = {
+            fase1: { leads: pt.f1_leads, citas: pt.f1_citas, conv: pct(pt.f1_citas, pt.f1_leads) },
+            fase2: { leads: pt.f2_leads, citas: pt.f2_citas, conv: pct(pt.f2_citas, pt.f2_leads) },
+        };
 
         const by_channel = Object.fromEntries(
             byChannelRaw.filter(c => c._id).map(c => [c._id, c.count])
@@ -129,6 +214,7 @@ export const getDashboard = async (req, res) => {
                 conversion_rate: convRate,
             },
             by_project,
+            phase_totals,
             by_channel,
         });
     } catch (err) {
